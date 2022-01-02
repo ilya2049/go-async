@@ -45,6 +45,16 @@ func (s *WordCounter) CountWordInPages(word string, pageURLs ...string) []WordCo
 	return unpackWorkResults(worker.Do(works...))
 }
 
+func (s *WordCounter) CountWordInPagesWithWorkerPool(poolSize int, word string, pageURLs ...string) []WordCountingResult {
+	works := make([]worker.Work, 0, len(pageURLs))
+
+	for _, pageURL := range pageURLs {
+		works = append(works, s.newCountingWordsWork(pageURL, word))
+	}
+
+	return unpackWorkResults(worker.DoWithPool(poolSize, works...))
+}
+
 func (s *WordCounter) newCountingWordsWork(pageURL, word string) worker.Work {
 	return func() worker.WorkResult {
 		wordsCount, err := s.countWordsInPageContents(pageURL, word)

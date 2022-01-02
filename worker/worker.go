@@ -2,10 +2,6 @@ package worker
 
 import "sync"
 
-type Work func() WorkResult
-
-type WorkResult interface{}
-
 func Do(works ...Work) []WorkResult {
 	if len(works) == 0 {
 		return []WorkResult{}
@@ -15,10 +11,10 @@ func Do(works ...Work) []WorkResult {
 		return []WorkResult{works[0]()}
 	}
 
-	return doParallel(works)
+	return doConcurrently(works)
 }
 
-func doParallel(works []Work) []WorkResult {
+func doConcurrently(works []Work) []WorkResult {
 	var wg sync.WaitGroup
 	resultsChannel := make(chan WorkResult, len(works))
 
