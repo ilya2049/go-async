@@ -1,15 +1,13 @@
-package main
+package web
 
 import (
 	"fmt"
 	"net/http"
 	"time"
-
-	"go-async/web"
 )
 
-func main() {
-	webWordCounter := web.NewWordCounter(&http.Client{
+func CountWords() {
+	webWordCounter := NewWordCounter(&http.Client{
 		Timeout: 3 * time.Second,
 	})
 
