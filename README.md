@@ -1,6 +1,6 @@
 ## Worker pool (fan-in/fan-out)
 
-```
+``` go
 func main() {
 	pool := worker.NewPool(2)
 	ctx := context.Background()
