@@ -1,90 +1,92 @@
 package worker
 
-import "sync"
+import (
+	"context"
+	"fmt"
+	"sync"
+)
 
-func DoWithPool(poolSize int, works ...Work) []WorkResult {
-	if len(works) == 0 || poolSize <= 0 {
-		return []WorkResult{}
-	}
-
-	if len(works) == 1 {
-		return []WorkResult{works[0]()}
-	}
-
-	return doConcurrentlyWithPool(poolSize, works)
+type Pool struct {
+	size int
 }
 
-func doConcurrentlyWithPool(poolSize int, works []Work) []WorkResult {
-	worksChannel := generateWorksChannel(works)
-	workResultsChannel := distributeWorks(poolSize, worksChannel)
-
-	workResults := make([]WorkResult, 0, len(works))
-	for workResult := range mergeWorkResults(workResultsChannel) {
-		workResults = append(workResults, workResult)
+func NewPool(size int) *Pool {
+	if size <= 0 {
+		panic("worker: invalid pool size: must be greater than zero")
 	}
 
-	return workResults
+	return &Pool{
+		size: size,
+	}
 }
 
-func generateWorksChannel(works []Work) <-chan Work {
-	worksChannel := make(chan Work)
+func (p *Pool) Run(ctx context.Context, worksChan <-chan Work) <-chan WorkResult {
+	resultChannels := make([]<-chan WorkResult, 0, p.size)
+
+	for i := 0; i < p.size; i++ {
+		resultChannels = append(resultChannels, p.newRunner(ctx, worksChan))
+	}
+
+	return p.mergeRunners(ctx, resultChannels)
+}
+
+func (*Pool) newRunner(ctx context.Context, worksChan <-chan Work) <-chan WorkResult {
+	resultChannel := make(chan WorkResult)
 
 	go func() {
-		for _, work := range works {
-			worksChannel <- work
-		}
+		defer func() {
+			fmt.Println("runner stopped")
+			close(resultChannel)
+		}()
 
-		close(worksChannel)
+		var result WorkResult
+		for work := range worksChan {
+			result = work()
+
+			select {
+			case <-ctx.Done():
+				return
+
+			case resultChannel <- result:
+				fmt.Println("work is done:", result)
+			}
+		}
 	}()
 
-	return worksChannel
+	return resultChannel
 }
 
-func distributeWorks(poolSize int, works <-chan Work) []<-chan WorkResult {
-	workResultsChannels := make([]<-chan WorkResult, 0, poolSize)
+func (*Pool) mergeRunners(ctx context.Context, resultsChannels []<-chan WorkResult) <-chan WorkResult {
+	mergedResultChannel := make(chan WorkResult)
 
-	for i := 0; i < poolSize; i++ {
-		workResultsChannels = append(workResultsChannels, doWorksInPipeline(works))
-	}
-
-	return workResultsChannels
-}
-
-func doWorksInPipeline(works <-chan Work) <-chan WorkResult {
-	workResultsChannel := make(chan WorkResult)
-
-	go func() {
-		for work := range works {
-			workResultsChannel <- work()
-		}
-
-		close(workResultsChannel)
-	}()
-
-	return workResultsChannel
-}
-
-func mergeWorkResults(workResultsChannels []<-chan WorkResult) <-chan WorkResult {
-	mergedWorkResultsChannel := make(chan WorkResult)
 	var wg sync.WaitGroup
-	wg.Add(len(workResultsChannels))
+	wg.Add(len(resultsChannels))
 
-	drainWorkResultsChannel := func(workResultsChannel <-chan WorkResult) {
-		for workResult := range workResultsChannel {
-			mergedWorkResultsChannel <- workResult
+	drain := func(resultChannel <-chan WorkResult) {
+		defer func() {
+			fmt.Println("drain runner stopped")
+			wg.Done()
+		}()
+
+		for result := range resultChannel {
+			select {
+			case <-ctx.Done():
+				return
+
+			case mergedResultChannel <- result:
+				fmt.Println("result merged:", result)
+			}
 		}
-
-		wg.Done()
 	}
 
-	for _, workResultsChannel := range workResultsChannels {
-		go drainWorkResultsChannel(workResultsChannel)
+	for _, resultChannel := range resultsChannels {
+		go drain(resultChannel)
 	}
 
 	go func() {
 		wg.Wait()
-		close(mergedWorkResultsChannel)
+		close(mergedResultChannel)
 	}()
 
-	return mergedWorkResultsChannel
+	return mergedResultChannel
 }
